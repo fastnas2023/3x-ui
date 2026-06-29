@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-json"
+	"golang.org/x/crypto/curve25519"
 
 	"github.com/mhsanaei/3x-ui/v3/internal/database"
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
@@ -151,6 +152,9 @@ func listenIsInternalOnly(listen string) bool {
 // output (#5134). Link generation keys purely on (inbound, email), so
 // same-email entries are pure duplicates and dropping them is lossless.
 func (s *SubService) matchingClients(inbound *model.Inbound, subId string) []model.Client {
+	if inbound != nil && inbound.Protocol == model.WireGuard {
+		return s.matchingWireGuardClients(inbound.Id, subId)
+	}
 	clients, err := s.inboundService.GetClients(inbound)
 	if err != nil {
 		logger.Error("SubService - GetClients: Unable to get clients from inbound")
@@ -168,6 +172,50 @@ func (s *SubService) matchingClients(inbound *model.Inbound, subId string) []mod
 		}
 		seen[key] = struct{}{}
 		out = append(out, client)
+	}
+	return out
+}
+
+func (s *SubService) matchingWireGuardClients(inboundId int, subId string) []model.Client {
+	var recs []model.ClientRecord
+	if err := database.GetDB().
+		Model(&model.ClientRecord{}).
+		Select("clients.*").
+		Joins("JOIN client_inbounds ON client_inbounds.client_id = clients.id").
+		Where("client_inbounds.inbound_id = ?", inboundId).
+		Where("clients.sub_id = ?", subId).
+		Order("clients.id ASC").
+		Find(&recs).Error; err != nil {
+		logger.Error("SubService - matchingWireGuardClients: Unable to get clients from DB")
+		return nil
+	}
+	out := make([]model.Client, 0, len(recs))
+	seen := make(map[string]struct{}, len(recs))
+	for _, rec := range recs {
+		key := strings.ToLower(rec.Email)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, model.Client{
+			Email:      rec.Email,
+			ID:         rec.UUID,
+			Password:   rec.Password,
+			Auth:       rec.Auth,
+			Flow:       rec.Flow,
+			Security:   rec.Security,
+			LimitIP:    rec.LimitIP,
+			TotalGB:    rec.TotalGB,
+			ExpiryTime: rec.ExpiryTime,
+			Enable:     rec.Enable,
+			TgID:       rec.TgID,
+			SubID:      rec.SubID,
+			Group:      rec.Group,
+			Comment:    rec.Comment,
+			Reset:      rec.Reset,
+			CreatedAt:  rec.CreatedAt,
+			UpdatedAt:  rec.UpdatedAt,
+		})
 	}
 	return out
 }
@@ -367,7 +415,7 @@ func (s *SubService) getInboundsBySubId(subId string) ([]*model.Inbound, error) 
 		JOIN client_inbounds ON client_inbounds.inbound_id = inbounds.id
 		JOIN clients ON clients.id = client_inbounds.client_id
 		WHERE
-			inbounds.protocol in ('vmess','vless','trojan','shadowsocks','hysteria')
+			inbounds.protocol in ('vmess','vless','trojan','shadowsocks','hysteria','wireguard')
 			AND clients.sub_id = ? AND inbounds.enable = ?
 	)`, subId, true).Order("sub_sort_index ASC").Order("id ASC").Find(&inbounds).Error
 	if err != nil {
@@ -485,7 +533,7 @@ func mergeStreamFromMaster(childStream, masterStream string) string {
 
 // GetLink dispatches to the protocol-specific generator for one (inbound, client)
 // pair. Returns "" when the inbound's protocol doesn't produce a subscription URL
-// (socks, http, mixed, wireguard, dokodemo, tunnel). The returned string may
+// (socks, http, mixed, dokodemo, tunnel). The returned string may
 // contain multiple `\n`-separated URLs when the inbound has externalProxy set.
 func (s *SubService) GetLink(inbound *model.Inbound, email string) string {
 	switch inbound.Protocol {
@@ -501,8 +549,143 @@ func (s *SubService) GetLink(inbound *model.Inbound, email string) string {
 		return s.genHysteriaLink(inbound, email)
 	case "mtproto":
 		return s.genMtprotoLink(inbound, email)
+	case "wireguard":
+		return s.genWireGuardLink(inbound, email)
 	}
 	return ""
+}
+
+func (s *SubService) genWireGuardLink(inbound *model.Inbound, email string) string {
+	if inbound.Protocol != model.WireGuard {
+		return ""
+	}
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(inbound.Settings), &settings); err != nil {
+		return ""
+	}
+	peer := findWireGuardPeer(settings, email, wireGuardClientIDByEmail(email))
+	if peer == nil {
+		return ""
+	}
+	privateKey, _ := peer["privateKey"].(string)
+	if privateKey == "" {
+		return ""
+	}
+	serverPublicKey := wireGuardPublicKeyFromPrivate(settingsString(settings, "secretKey"))
+	if serverPublicKey == "" {
+		return ""
+	}
+	address := firstString(settingsStringSlice(peer["allowedIPs"]))
+	if address == "" {
+		return ""
+	}
+	params := map[string]string{
+		"publickey": serverPublicKey,
+		"address":   address,
+	}
+	if mtu, ok := intFromAny(settings["mtu"]); ok && mtu > 0 {
+		params["mtu"] = strconv.Itoa(mtu)
+	}
+	link := fmt.Sprintf("wireguard://%s@%s", encodeUserinfo(privateKey), joinHostPort(s.resolveInboundAddress(inbound), inbound.Port))
+	return buildLinkWithParams(link, params, s.genRemark(inbound, email, "", "udp"))
+}
+
+func findWireGuardPeer(settings map[string]any, email string, clientID int) map[string]any {
+	rawPeers, _ := settings["peers"].([]any)
+	var fallback map[string]any
+	for _, raw := range rawPeers {
+		peer, _ := raw.(map[string]any)
+		if peer == nil {
+			continue
+		}
+		if clientID > 0 {
+			if peerClientID, ok := intFromAny(peer["clientId"]); ok && peerClientID == clientID {
+				return peer
+			}
+		}
+		if peerEmail, _ := peer["clientEmail"].(string); strings.EqualFold(peerEmail, email) {
+			return peer
+		}
+		if fallback == nil {
+			if comment, _ := peer["comment"].(string); strings.EqualFold(comment, email) {
+				fallback = peer
+			}
+		}
+	}
+	return fallback
+}
+
+func wireGuardClientIDByEmail(email string) int {
+	var rec model.ClientRecord
+	if err := database.GetDB().
+		Select("id").
+		Where("email = ?", email).
+		First(&rec).Error; err != nil {
+		return 0
+	}
+	return rec.Id
+}
+
+func wireGuardPublicKeyFromPrivate(privateKey string) string {
+	raw, err := base64.StdEncoding.DecodeString(privateKey)
+	if err != nil || len(raw) != curve25519.ScalarSize {
+		return ""
+	}
+	var priv [32]byte
+	copy(priv[:], raw)
+	priv[0] &= 248
+	priv[31] &= 127
+	priv[31] |= 64
+	var pub [32]byte
+	curve25519.ScalarBaseMult(&pub, &priv)
+	return base64.StdEncoding.EncodeToString(pub[:])
+}
+
+func settingsString(settings map[string]any, key string) string {
+	v, _ := settings[key].(string)
+	return v
+}
+
+func settingsStringSlice(value any) []string {
+	switch v := value.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func firstString(values []string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func intFromAny(value any) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		if v == float64(int(v)) {
+			return int(v), true
+		}
+	case json.Number:
+		i, err := strconv.Atoi(v.String())
+		return i, err == nil
+	}
+	return 0, false
 }
 
 // genMtprotoLink builds a Telegram proxy deep link for an mtproto inbound:
