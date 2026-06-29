@@ -9,6 +9,18 @@ plain='\033[0m'
 xui_folder="${XUI_MAIN_FOLDER:=/usr/local/x-ui}"
 xui_service="${XUI_SERVICE:=/etc/systemd/system}"
 
+github_raw_url() {
+    printf 'https://raw.githubusercontent.com/%s/%s/%s' "${XUI_REPO:-MHSanaei/3x-ui}" "${XUI_BRANCH:-main}" "$1"
+}
+
+github_release_url() {
+    printf 'https://github.com/%s/releases/%s' "${XUI_REPO:-MHSanaei/3x-ui}" "$1"
+}
+
+github_api_url() {
+    printf 'https://api.github.com/repos/%s/%s' "${XUI_REPO:-MHSanaei/3x-ui}" "$1"
+}
+
 # Don't edit this config
 b_source="${BASH_SOURCE[0]}"
 while [ -h "$b_source" ]; do
@@ -901,13 +913,13 @@ update_x-ui() {
         tag_version="${XUI_UPDATE_TAG}"
         echo -e "${green}Using update tag: ${tag_version}${plain}"
     else
-        tag_version=$(${curl_bin} -Ls "https://api.github.com/repos/MHSanaei/3x-ui/releases/latest" 2> /dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        tag_version=$(${curl_bin} -Ls "$(github_api_url "releases/latest")" 2> /dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
         if [[ ! -n "$tag_version" ]]; then
             _fail "ERROR: Failed to fetch x-ui version, it may be due to GitHub API restrictions, please try it later"
         fi
     fi
     echo -e "Got x-ui latest version: ${tag_version}, beginning the installation..."
-    ${curl_bin} -fLRo ${xui_folder}-linux-$(arch).tar.gz https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz 2> /dev/null
+    ${curl_bin} -fLRo ${xui_folder}-linux-$(arch).tar.gz "$(github_release_url "download/${tag_version}/x-ui-linux-$(arch).tar.gz")" 2> /dev/null
     if [[ $? -ne 0 ]]; then
         _fail "ERROR: Failed to download x-ui, please be sure that your server can access GitHub"
     fi
@@ -974,7 +986,7 @@ update_x-ui() {
     chmod +x x-ui bin/xray-linux-$(arch) > /dev/null 2>&1
 
     echo -e "${green}Downloading and installing x-ui.sh script...${plain}"
-    ${curl_bin} -fLRo /usr/bin/x-ui https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh > /dev/null 2>&1
+    ${curl_bin} -fLRo /usr/bin/x-ui "$(github_raw_url "x-ui.sh")" > /dev/null 2>&1
     if [[ $? -ne 0 ]]; then
         _fail "ERROR: Failed to download x-ui.sh script, please be sure that your server can access GitHub"
     fi
@@ -993,7 +1005,7 @@ update_x-ui() {
 
     if [[ $release == "alpine" ]]; then
         echo -e "${green}Downloading and installing startup unit x-ui.rc...${plain}"
-        ${curl_bin} -fLRo /etc/init.d/x-ui https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.rc > /dev/null 2>&1
+        ${curl_bin} -fLRo /etc/init.d/x-ui "$(github_raw_url "x-ui.rc")" > /dev/null 2>&1
         if [[ $? -ne 0 ]]; then
             _fail "ERROR: Failed to download startup unit x-ui.rc, please be sure that your server can access GitHub"
         fi
@@ -1046,13 +1058,13 @@ update_x-ui() {
                 echo -e "${yellow}Service files not found in tar.gz, downloading from GitHub...${plain}"
                 case "${release}" in
                     ubuntu | debian | armbian)
-                        ${curl_bin} -fLRo ${xui_service}/x-ui.service https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.service.debian > /dev/null 2>&1
+                        ${curl_bin} -fLRo ${xui_service}/x-ui.service "$(github_raw_url "x-ui.service.debian")" > /dev/null 2>&1
                         ;;
                     arch | manjaro | parch)
-                        ${curl_bin} -fLRo ${xui_service}/x-ui.service https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.service.arch > /dev/null 2>&1
+                        ${curl_bin} -fLRo ${xui_service}/x-ui.service "$(github_raw_url "x-ui.service.arch")" > /dev/null 2>&1
                         ;;
                     *)
-                        ${curl_bin} -fLRo ${xui_service}/x-ui.service https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.service.rhel > /dev/null 2>&1
+                        ${curl_bin} -fLRo ${xui_service}/x-ui.service "$(github_raw_url "x-ui.service.rhel")" > /dev/null 2>&1
                         ;;
                 esac
 

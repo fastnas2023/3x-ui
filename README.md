@@ -85,6 +85,12 @@ To install the rolling **dev** build (latest per-commit pre-release from `main`,
 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) dev-latest
 ```
 
+To install from a fork, set `XUI_REPO` and download that fork's `install.sh`. The installer persists the repository setting so later menu updates use the same fork:
+
+```bash
+XUI_REPO=owner/3x-ui bash <(curl -Ls https://raw.githubusercontent.com/owner/3x-ui/main/install.sh) dev-latest
+```
+
 During installation a random username, password, and access path are generated. After installation, run `x-ui` to open the management menu, where you can start/stop the service, view or reset your login credentials, manage SSL certificates, and more.
 
 For full documentation, please visit the [project Wiki](https://github.com/MHSanaei/3x-ui/wiki).

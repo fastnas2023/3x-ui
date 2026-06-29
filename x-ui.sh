@@ -98,6 +98,10 @@ mkdir -p "${log_folder}"
 iplimit_log_path="${log_folder}/3xipl.log"
 iplimit_banned_log_path="${log_folder}/3xipl-banned.log"
 
+github_raw_url() {
+    printf 'https://raw.githubusercontent.com/%s/%s/%s' "${XUI_REPO:-MHSanaei/3x-ui}" "${XUI_BRANCH:-main}" "$1"
+}
+
 confirm() {
     if [[ $# > 1 ]]; then
         echo && read -rp "$1 [Default $2]: " temp
@@ -129,7 +133,8 @@ before_show_menu() {
 }
 
 install() {
-    bash <(curl -Ls https://raw.githubusercontent.com/MHSanaei/3x-ui/main/install.sh)
+    load_xui_env
+    XUI_REPO="${XUI_REPO:-MHSanaei/3x-ui}" XUI_BRANCH="${XUI_BRANCH:-main}" bash <(curl -Ls "$(github_raw_url "install.sh")")
     if [[ $? == 0 ]]; then
         if [[ $# == 0 ]]; then
             start
@@ -148,7 +153,8 @@ update() {
         fi
         return 0
     fi
-    bash <(curl -Ls https://raw.githubusercontent.com/MHSanaei/3x-ui/main/update.sh)
+    load_xui_env
+    XUI_REPO="${XUI_REPO:-MHSanaei/3x-ui}" XUI_BRANCH="${XUI_BRANCH:-main}" bash <(curl -Ls "$(github_raw_url "update.sh")")
     if [[ $? == 0 ]]; then
         LOGI "Update is complete, Panel has automatically restarted "
         before_show_menu
@@ -166,7 +172,8 @@ update_dev() {
     fi
     # XUI_UPDATE_TAG tells update.sh to install the dev-latest pre-release
     # instead of the latest stable tag.
-    XUI_UPDATE_TAG="dev-latest" bash <(curl -Ls https://raw.githubusercontent.com/MHSanaei/3x-ui/main/update.sh)
+    load_xui_env
+    XUI_REPO="${XUI_REPO:-MHSanaei/3x-ui}" XUI_BRANCH="${XUI_BRANCH:-main}" XUI_UPDATE_TAG="dev-latest" bash <(curl -Ls "$(github_raw_url "update.sh")")
     if [[ $? == 0 ]]; then
         LOGI "Dev update is complete, Panel has automatically restarted "
         before_show_menu
@@ -184,7 +191,8 @@ update_menu() {
         return 0
     fi
 
-    curl -fLRo /usr/bin/x-ui https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh
+    load_xui_env
+    curl -fLRo /usr/bin/x-ui "$(github_raw_url "x-ui.sh")"
     chmod +x ${xui_folder}/x-ui.sh
     chmod +x /usr/bin/x-ui
 
@@ -205,11 +213,10 @@ legacy_version() {
         echo "Panel version cannot be empty. Exiting."
         exit 1
     fi
-    # Use the entered panel version in the download link
-    install_command="bash <(curl -Ls "https://raw.githubusercontent.com/mhsanaei/3x-ui/v$tag_version/install.sh") v$tag_version"
-
     echo "Downloading and installing panel version $tag_version..."
-    eval $install_command
+    load_xui_env
+    local repo="${XUI_REPO:-MHSanaei/3x-ui}"
+    XUI_REPO="${repo}" XUI_BRANCH="v$tag_version" bash <(curl -Ls "https://raw.githubusercontent.com/${repo}/v$tag_version/install.sh") "v$tag_version"
 }
 
 # Function to handle the deletion of the script file
@@ -230,6 +237,17 @@ xui_env_file_path() {
             echo "/etc/sysconfig/x-ui"
             ;;
     esac
+}
+
+load_xui_env() {
+    local env_file
+    env_file="$(xui_env_file_path)"
+    if [[ -r "$env_file" ]]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "$env_file"
+        set +a
+    fi
 }
 
 uninstall() {
@@ -254,8 +272,13 @@ uninstall() {
     fi
 
     local panel_used_postgres="false"
+    local reinstall_repo
+    local reinstall_branch
     local db_env_file
     db_env_file="$(xui_env_file_path)"
+    load_xui_env
+    reinstall_repo="${XUI_REPO:-MHSanaei/3x-ui}"
+    reinstall_branch="${XUI_BRANCH:-main}"
     if [[ -r "$db_env_file" ]] && grep -q '^XUI_DB_TYPE=postgres' "$db_env_file"; then
         panel_used_postgres="true"
     fi
@@ -271,7 +294,7 @@ uninstall() {
     echo ""
     echo -e "Uninstalled Successfully.\n"
     echo "If you need to install this panel again, you can use below command:"
-    echo -e "${green}bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)${plain}"
+    echo -e "${green}XUI_REPO=${reinstall_repo} XUI_BRANCH=${reinstall_branch} bash <(curl -Ls https://raw.githubusercontent.com/${reinstall_repo}/${reinstall_branch}/install.sh)${plain}"
     echo ""
     # Trap the SIGTERM signal
     trap delete_script SIGTERM
@@ -804,7 +827,8 @@ enable_bbr() {
 }
 
 update_shell() {
-    curl -fLRo /usr/bin/x-ui -z /usr/bin/x-ui https://github.com/MHSanaei/3x-ui/raw/main/x-ui.sh
+    load_xui_env
+    curl -fLRo /usr/bin/x-ui -z /usr/bin/x-ui "$(github_raw_url "x-ui.sh")"
     if [[ $? != 0 ]]; then
         echo ""
         LOGE "Failed to download script, Please check whether the machine can connect Github"

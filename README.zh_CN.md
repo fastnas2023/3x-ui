@@ -85,6 +85,12 @@ bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.
 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) dev-latest
 ```
 
+若要从 fork 安装，请设置 `XUI_REPO` 并下载该 fork 的 `install.sh`。安装器会持久化仓库设置，之后面板菜单里的更新也会继续使用同一个 fork：
+
+```bash
+XUI_REPO=owner/3x-ui bash <(curl -Ls https://raw.githubusercontent.com/owner/3x-ui/main/install.sh) dev-latest
+```
+
 安装过程中会生成随机的用户名、密码和访问路径。安装完成后，运行 `x-ui` 打开管理菜单，您可以在其中启动/停止服务、查看或重置登录凭据、管理 SSL 证书等。
 
 完整文档请参阅 [项目Wiki](https://github.com/MHSanaei/3x-ui/wiki)。
